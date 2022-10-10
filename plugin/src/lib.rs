@@ -1,6 +1,10 @@
 use std::{borrow::Cow, collections::HashMap, ffi::CStr, os::raw::c_char, sync::Mutex};
 
-use opentelemetry::trace::{Span as SpanT, Tracer as TracerT};
+use opentelemetry::{
+    trace::{Span as SpanT, Tracer as TracerT},
+    KeyValue,
+};
+use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::{
     trace::{Span, Tracer},
     Resource,
@@ -89,11 +93,11 @@ pub extern "C" fn start_activity(
     let name = unsafe { CStr::from_ptr(name as *const _) };
     let name_ = name.to_str().unwrap().to_owned();
     let tracer = cx.tracer.clone();
+    println!("Start activity {act:?} {ty:?} {name:?} {parent:?}");
     cx.runtime.spawn(async move {
         let mut map = cx.active_spans.lock().unwrap();
         map.begin(&tracer, act, &name_);
     });
-    println!("Start activity {act:?} {ty:?} {name:?} {parent:?}");
 }
 
 #[no_mangle]
@@ -106,19 +110,25 @@ pub extern "C" fn end_activity(cx: &Context, act: ActivityId) {
 type Error = Box<dyn std::error::Error>;
 
 fn make_context() -> Result<Context, Error> {
+    eprintln!("main");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("nix_otel_plugin")
         .enable_all()
         .build()
         .unwrap();
+    eprintln!("runtime");
     let tracer = runtime.block_on(async {
         opentelemetry_otlp::new_pipeline()
             .tracing()
-            .with_exporter(opentelemetry_otlp::new_exporter().tonic())
-            .with_trace_config(opentelemetry_sdk::trace::config().with_resource(Resource::new([])))
+            .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_env())
+            .with_trace_config(
+                opentelemetry_sdk::trace::config()
+                    .with_resource(Resource::new([KeyValue::new("service.name", "nix-otel")])),
+            )
             .install_simple()
     })?;
+    eprintln!("tracer init");
     Ok(Context {
         tracer,
         runtime,
