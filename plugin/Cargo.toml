@@ -1,0 +1,25 @@
+[package]
+name = "nix-otel-plugin"
+version = "0.1.0"
+edition = "2018"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+[lib]
+crate_type = ["cdylib"]
+test = false
+
+[build-dependencies]
+cc = "1.0.58"
+pkg-config = "0.3.18"
+cbindgen = "0.24.3"
+
+[dependencies]
+opentelemetry = "0.18.0"
+opentelemetry-otlp = "0.11.0"
+opentelemetry_sdk = "0.18.0"
+tokio = { version = "1.21.2", features = ["full"] }

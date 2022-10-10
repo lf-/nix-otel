@@ -1,0 +1,4 @@
+{
+    "rust-analyzer.cargo.runBuildScripts": false,
+    "rust-analyzer.server.path": "direnv-ra"
+}
