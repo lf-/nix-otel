@@ -3,12 +3,6 @@ name = "nix-otel-plugin"
 version = "0.1.0"
 edition = "2018"
 
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-
 [lib]
 crate_type = ["cdylib"]
 test = false
@@ -20,6 +14,7 @@ cbindgen = "0.24.3"
 
 [dependencies]
 opentelemetry = "0.18.0"
-opentelemetry-otlp = "0.11.0"
+opentelemetry-otlp = { version = "0.11.0", features = ["tls"] }
 opentelemetry_sdk = "0.18.0"
+thread_local = "1.1.4"
 tokio = { version = "1.21.2", features = ["full"] }
