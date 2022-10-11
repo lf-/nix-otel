@@ -1,23 +1,22 @@
-use std::{borrow::Cow, collections::HashMap, time::SystemTime};
+use std::{borrow::Cow, collections::HashMap, convert::TryFrom, time::SystemTime};
 
 use opentelemetry::{
-    trace::{Span as SpanT, Tracer as TracerT},
+    global,
+    trace::{TraceContextExt, Tracer as TracerT},
     Context, KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    trace::{Span, Tracer},
-    Resource,
-};
+use opentelemetry_sdk::{trace::Tracer, Resource};
 use tokio::{runtime::Runtime, sync::mpsc};
+use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue, MetadataMap};
 
-use crate::activity::{ActivityId, ActivityRecord};
+use crate::activity::{ActivityId, ActivityRecord, Field, ResultKind};
 
 struct SpanMap(pub HashMap<ActivityId, ActivityData>);
 
 struct ActivityData {
     // record: ActivityRecord,
-    span: Span,
+    context: Context,
 }
 
 impl SpanMap {
@@ -30,20 +29,42 @@ impl SpanMap {
     ) {
         let id = record.id;
         let name = record.name.clone();
+        let parent_context = record
+            .parent
+            .and_then(|p| self.0.get(&p))
+            .map(|p| &p.context)
+            .unwrap_or(context);
+
         let ad = ActivityData {
-            span: tracer
-                .span_builder(Cow::Owned(name))
-                .with_start_time(start_time)
-                .start_with_context(tracer, context),
+            // TODO: is this actually right?!
+            context: parent_context.with_span(
+                tracer
+                    .span_builder(Cow::Owned(name))
+                    .with_start_time(start_time)
+                    .with_attributes([KeyValue::new(
+                        "nix.activitykind",
+                        format!("{:?}", record.kind),
+                    )])
+                    .start_with_context(tracer, parent_context),
+            ),
         };
 
         self.0.insert(id, ad);
     }
 
+    fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime) {
+        if let Some(ad) = self.0.get(&act) {
+            ad.context
+                .span()
+                .add_event_with_timestamp(format!("{kind:?}"), time, Vec::default())
+        }
+    }
+
     fn end(&mut self, act: ActivityId, end_time: SystemTime) {
         if let Some(ad) = self.0.get_mut(&act) {
-            ad.span.end_with_timestamp(end_time);
-            self.0.remove(&act);
+            ad.context.span().end_with_timestamp(end_time);
+            // intentionally don't remove it, since it may be used as a parent
+            // for another span
         }
     }
 }
@@ -57,6 +78,7 @@ impl Default for SpanMap {
 pub enum Message {
     BeginActivity(ActivityRecord, SystemTime),
     EndActivity(ActivityId, SystemTime),
+    Result(ActivityId, ResultKind, SystemTime, Vec<Field>),
     Terminate,
 }
 
@@ -80,31 +102,66 @@ async fn process_message(
 ) {
     match message {
         Message::BeginActivity(rec, time) => {
-            eprintln!("start {rec:?} {time:?}");
             span_map.begin(tracer, root_context, rec, time);
         }
         Message::EndActivity(id, time) => {
-            eprintln!("end {id:?} {time:?}");
             span_map.end(id, time);
+        }
+        // FIXME(jade): use fields
+        Message::Result(id, kind, time, _fields) => {
+            span_map.result(id, kind, time);
         }
         Message::Terminate => panic!("handled outside"),
     }
 }
 
-async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), Error> {
+fn get_tracer_headers() -> MetadataMap {
+    let mut map = MetadataMap::new();
+    let headers = std::env::var("OTEL_EXPORTER_OTLP_HEADERS");
+    if let Ok(h) = headers {
+        h.split(',')
+            .filter_map(|part| {
+                let eq = part.find('=')?;
+                let (key, val) = part.split_at(eq);
+                let val = &val[1..];
+                Some((
+                    AsciiMetadataKey::from_bytes(key.as_bytes()).ok()?,
+                    AsciiMetadataValue::try_from(val.as_bytes()).ok()?,
+                ))
+            })
+            .for_each(|(h, val)| {
+                let _ = map.insert(h, val);
+            });
+    }
+    map
+}
+
+async fn exporter_run(
+    mut recv: mpsc::UnboundedReceiver<Message>,
+) -> Result<(), Error> {
+    let tracer_meta = get_tracer_headers();
+    // FIXME(jade): this sets a global tracing provider, which is probably
+    // *wrong* for a plugin to do. We could definitely desugar this and not
+    // do the global provider.
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
-        .with_exporter(opentelemetry_otlp::new_exporter().tonic().with_env())
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_env()
+                .with_metadata(tracer_meta),
+        )
         .with_trace_config(
             opentelemetry_sdk::trace::config()
                 .with_resource(Resource::new([KeyValue::new("service.name", "nix-otel")])),
         )
-        .install_simple()?;
+        .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
     let mut span_map = SpanMap::default();
 
     let root_context = Context::new();
-    let mut root_span = tracer.start_with_context("nix execution", &root_context);
+    let root_context =
+        root_context.with_span(tracer.start_with_context("nix execution", &root_context));
     loop {
         match recv.recv().await {
             None | Some(Message::Terminate) => {
@@ -112,12 +169,22 @@ async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), 
                 // is this manual usage an async bug? who can say. the
                 // background context stuff is a real good way to fuck up with
                 // async though....
-                root_span.end();
-                return Ok(());
+                root_context.span().end();
+                break;
             }
             Some(v) => process_message(v, &mut span_map, &tracer, &root_context).await,
         }
     }
+    if let Some(tp) = tracer.provider() {
+        for res in tp.force_flush() {
+            if let Err(e) = res {
+                eprintln!("send error: {e:?}");
+            }
+        }
+        drop(tp);
+    }
+    global::shutdown_tracer_provider();
+    Ok(())
 }
 
 pub fn exporter_main(recv: mpsc::UnboundedReceiver<Message>) {

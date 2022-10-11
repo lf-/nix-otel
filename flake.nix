@@ -61,6 +61,7 @@
                 # tools on the builder machine needed to build; e.g. pkg-config
                 nativeBuildInputs = with final; [
                   pkg-config
+                  protobuf
                 ];
 
                 # native libs

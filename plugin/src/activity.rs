@@ -1,7 +1,11 @@
+use std::os::raw::c_char;
+use std::{slice, str};
+
 #[derive(Clone, Copy, Debug)]
 #[repr(u32)]
 pub enum ResultKind {
-    FileLocked = 100,
+    Unknown = 0,
+    FileLinked = 100,
     BuildLogLine = 101,
     UntrustedPath = 102,
     CorruptedPath = 103,
@@ -36,6 +40,49 @@ pub enum ActivityKind {
 #[derive(Debug)]
 pub struct ActivityRecord {
     pub id: ActivityId,
+    pub parent: Option<ActivityId>,
     pub name: String,
     pub kind: ActivityKind,
+}
+
+#[repr(C)]
+pub struct FfiString {
+    pub start: *const c_char,
+    pub len: usize,
+}
+
+#[repr(C, u8)]
+pub enum FfiField {
+    String(FfiString),
+    Num(u64),
+}
+
+#[derive(Debug)]
+pub enum Field {
+    String(String),
+    Num(u64),
+}
+
+pub unsafe fn unmarshal_field(field: &FfiField) -> Option<Field> {
+    match field {
+        FfiField::String(s) => {
+            let bytes = unsafe { slice::from_raw_parts(s.start as *const u8, s.len) };
+            Some(Field::String(String::from(str::from_utf8(bytes).ok()?)))
+        }
+        FfiField::Num(n) => Some(Field::Num(*n)),
+    }
+}
+
+pub unsafe fn unmarshal_fields(fields: FfiFields) -> Vec<Field> {
+    let slice = unsafe { slice::from_raw_parts(fields.start, fields.count) };
+    slice
+        .iter()
+        .filter_map(|ff| unsafe { unmarshal_field(ff) })
+        .collect()
+}
+
+#[repr(C)]
+pub struct FfiFields {
+    pub start: *const FfiField,
+    pub count: usize,
 }

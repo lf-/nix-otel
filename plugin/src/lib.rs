@@ -1,3 +1,4 @@
+#![warn(unsafe_op_in_unsafe_fn)]
 use std::{
     ffi::CStr,
     os::raw::c_char,
@@ -6,7 +7,7 @@ use std::{
     time::SystemTime,
 };
 
-use activity::{ActivityId, ActivityKind};
+use activity::{unmarshal_fields, ActivityId, ActivityKind, FfiFields, ResultKind};
 use exporter::{exporter_main, Message};
 use thread_local::ThreadLocal;
 use tokio::sync::mpsc;
@@ -38,7 +39,6 @@ fn tell(cx: &Context, message: Message) {
 
 #[no_mangle]
 pub extern "C" fn start_activity(
-    // FIXME: this lifetime is *basically* true but its also kinda evil
     cx: &Context,
     act: ActivityId,
     ty: ActivityKind,
@@ -54,10 +54,21 @@ pub extern "C" fn start_activity(
                 id: act,
                 kind: ty,
                 name: name_,
+                parent: if parent == ActivityId(0) {
+                    None
+                } else {
+                    Some(parent)
+                },
             },
             SystemTime::now(),
         ),
     );
+}
+
+#[no_mangle]
+pub extern "C" fn on_result(cx: &Context, act: ActivityId, ty: ResultKind, fields: FfiFields) {
+    let fields = unsafe { unmarshal_fields(fields) };
+    tell(cx, Message::Result(act, ty, SystemTime::now(), fields))
 }
 
 #[no_mangle]
@@ -66,7 +77,7 @@ pub extern "C" fn end_activity(cx: &Context, act: ActivityId) {
 }
 
 #[no_mangle]
-pub extern "C" fn initialize_plugin() -> *const Context {
+pub extern "C" fn initialize_plugin() -> *mut Context {
     let (send, recv) = mpsc::unbounded_channel();
     let exporter_thread = thread::Builder::new()
         .name("OTel exporter thread".to_owned())
@@ -89,7 +100,7 @@ pub extern "C" fn deinitialize_plugin(cx: &mut Context) {
         .lock()
         .unwrap()
         .send(Message::Terminate)
-        .unwrap();
+        .expect("exporter thread seems to have panicked");
 
     // can't actually force the thread to terminate if something bad happens,
     // but we can join it
