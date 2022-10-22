@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::os::raw::c_char;
 use std::{slice, str};
 
@@ -61,6 +62,15 @@ pub enum FfiField {
 pub enum Field {
     String(String),
     Num(u64),
+}
+
+impl Display for Field {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Field::String(s) => f.write_str(&s),
+            Field::Num(n) => n.fmt(f),
+        }
+    }
 }
 
 pub unsafe fn unmarshal_field(field: &FfiField) -> Option<Field> {

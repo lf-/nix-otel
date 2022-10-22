@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashMap, convert::TryFrom, time::SystemTime}
 use opentelemetry::{
     global,
     trace::{TraceContextExt, Tracer as TracerT},
-    Context, KeyValue,
+    Array, Context, KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{trace::Tracer, Resource};
@@ -52,11 +52,17 @@ impl SpanMap {
         self.0.insert(id, ad);
     }
 
-    fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime) {
+    fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime, fields: Vec<Field>) {
         if let Some(ad) = self.0.get(&act) {
+            let attrs = vec![KeyValue::new(
+                "nix.fields",
+                opentelemetry::Value::Array(Array::String(
+                    fields.iter().map(|v| format!("{v}").into()).collect(),
+                )),
+            )];
             ad.context
                 .span()
-                .add_event_with_timestamp(format!("{kind:?}"), time, Vec::default())
+                .add_event_with_timestamp(format!("{kind:?}"), time, attrs)
         }
     }
 
@@ -107,9 +113,8 @@ async fn process_message(
         Message::EndActivity(id, time) => {
             span_map.end(id, time);
         }
-        // FIXME(jade): use fields
-        Message::Result(id, kind, time, _fields) => {
-            span_map.result(id, kind, time);
+        Message::Result(id, kind, time, fields) => {
+            span_map.result(id, kind, time, fields);
         }
         Message::Terminate => panic!("handled outside"),
     }
@@ -136,9 +141,7 @@ fn get_tracer_headers() -> MetadataMap {
     map
 }
 
-async fn exporter_run(
-    mut recv: mpsc::UnboundedReceiver<Message>,
-) -> Result<(), Error> {
+async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), Error> {
     let tracer_meta = get_tracer_headers();
     // FIXME(jade): this sets a global tracing provider, which is probably
     // *wrong* for a plugin to do. We could definitely desugar this and not
