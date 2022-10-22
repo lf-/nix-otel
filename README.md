@@ -61,10 +61,9 @@ which will create a `compile_commands.json` with the appropriate contents.
 
 Run in development like so:
 
+```shell
+nix build .# --option plugin-files target/debug/libnix_otel_plugin.so
 ```
-nix-otel/plugin » cargo b && nix --option plugin-files ../target/debug/libnix_otel_plugin.so build ..#
-```
-
 
 ## Project information
 
