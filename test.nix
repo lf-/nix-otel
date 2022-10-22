@@ -16,5 +16,6 @@ in
     installPhase = ''
       sleep 0.2
       mkdir $out
+      exit 1
     '';
   }

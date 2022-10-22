@@ -7,12 +7,12 @@ use std::{
     time::SystemTime,
 };
 
-use activity::{unmarshal_fields, ActivityId, ActivityKind, FfiFields, ResultKind};
+use activity::{unmarshal_fields, ActivityId, ActivityKind, FfiFields, FfiString, ResultKind};
 use exporter::{exporter_main, Message};
 use thread_local::ThreadLocal;
 use tokio::sync::mpsc;
 
-use crate::activity::ActivityRecord;
+use crate::activity::{unmarshal_string, ActivityRecord};
 mod activity;
 mod exporter;
 
@@ -77,11 +77,18 @@ pub extern "C" fn end_activity(cx: &Context, act: ActivityId) {
 }
 
 #[no_mangle]
-pub extern "C" fn initialize_plugin() -> *mut Context {
+pub extern "C" fn initialize_plugin(
+    otlp_endpoint: Option<&FfiString>,
+    otlp_headers: &FfiString,
+) -> *mut Context {
     let (send, recv) = mpsc::unbounded_channel();
+    let endpoint = otlp_endpoint.map(|s| unsafe { unmarshal_string(s) });
+    let otlp_headers = unsafe { unmarshal_string(otlp_headers) };
+    dbg!(&endpoint, &otlp_headers);
+
     let exporter_thread = thread::Builder::new()
         .name("OTel exporter thread".to_owned())
-        .spawn(|| exporter_main(recv))
+        .spawn(|| exporter_main(recv, endpoint, otlp_headers))
         .expect("startup exporter thread");
 
     Box::into_raw(Box::new(Context {

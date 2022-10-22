@@ -5,8 +5,12 @@ use opentelemetry::{
     trace::{TraceContextExt, Tracer as TracerT},
     Context, KeyValue,
 };
+use opentelemetry_api::trace::TracerProvider as TracerProviderT;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{trace::Tracer, Resource};
+use opentelemetry_sdk::{
+    trace::{Tracer, TracerProvider},
+    Resource,
+};
 use tokio::{runtime::Runtime, sync::mpsc};
 use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue, MetadataMap};
 
@@ -115,47 +119,53 @@ async fn process_message(
     }
 }
 
-fn get_tracer_headers() -> MetadataMap {
+fn get_tracer_headers(headers: String) -> MetadataMap {
     let mut map = MetadataMap::new();
-    let headers = std::env::var("OTEL_EXPORTER_OTLP_HEADERS");
-    if let Ok(h) = headers {
-        h.split(',')
-            .filter_map(|part| {
-                let eq = part.find('=')?;
-                let (key, val) = part.split_at(eq);
-                let val = &val[1..];
-                Some((
-                    AsciiMetadataKey::from_bytes(key.as_bytes()).ok()?,
-                    AsciiMetadataValue::try_from(val.as_bytes()).ok()?,
-                ))
-            })
-            .for_each(|(h, val)| {
-                let _ = map.insert(h, val);
-            });
-    }
+    headers
+        .split(',')
+        .filter_map(|part| {
+            let eq = part.find('=')?;
+            let (key, val) = part.split_at(eq);
+            let val = &val[1..];
+            Some((
+                AsciiMetadataKey::from_bytes(key.as_bytes()).ok()?,
+                AsciiMetadataValue::try_from(val.as_bytes()).ok()?,
+            ))
+        })
+        .for_each(|(h, val)| {
+            let _ = map.insert(h, val);
+        });
     map
 }
 
 async fn exporter_run(
     mut recv: mpsc::UnboundedReceiver<Message>,
+    endpoint: Option<String>,
+    otlp_headers: String,
 ) -> Result<(), Error> {
-    let tracer_meta = get_tracer_headers();
+    let tracer = if let Some(endpoint) = endpoint {
+        let tracer_meta = get_tracer_headers(otlp_headers);
+
+        opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(endpoint)
+                    .with_metadata(tracer_meta),
+            )
+            .with_trace_config(
+                opentelemetry_sdk::trace::config()
+                    .with_resource(Resource::new([KeyValue::new("service.name", "nix-otel")])),
+            )
+            .install_batch(opentelemetry_sdk::runtime::Tokio)?
+    } else {
+        TracerProvider::versioned_tracer(&TracerProvider::default(), "NullTracer", None, None)
+    };
+
     // FIXME(jade): this sets a global tracing provider, which is probably
     // *wrong* for a plugin to do. We could definitely desugar this and not
     // do the global provider.
-    let tracer = opentelemetry_otlp::new_pipeline()
-        .tracing()
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_env()
-                .with_metadata(tracer_meta),
-        )
-        .with_trace_config(
-            opentelemetry_sdk::trace::config()
-                .with_resource(Resource::new([KeyValue::new("service.name", "nix-otel")])),
-        )
-        .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
     let mut span_map = SpanMap::default();
 
@@ -187,9 +197,13 @@ async fn exporter_run(
     Ok(())
 }
 
-pub fn exporter_main(recv: mpsc::UnboundedReceiver<Message>) {
+pub fn exporter_main(
+    recv: mpsc::UnboundedReceiver<Message>,
+    endpoint: Option<String>,
+    otlp_headers: String,
+) {
     let runtime = startup().expect("startup exporter");
     runtime
-        .block_on(exporter_run(recv))
+        .block_on(exporter_run(recv, endpoint, otlp_headers))
         .expect("fatal exporter error");
 }

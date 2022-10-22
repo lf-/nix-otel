@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <config.h>
+#include <config.hh>
 #include <dlfcn.h>
 #include <eval-inline.hh>
 #include <globals.hh>
@@ -77,6 +78,10 @@ static auto marshalResultType(ResultType rt) -> ResultKind {
   }
 }
 
+static auto marshalString(std::string const &str) -> FfiString {
+  return FfiString{.start = str.data(), .len = str.length()};
+}
+
 static auto marshalField(Logger::Field const &field) -> FfiField {
   if (field.type == nix::Logger::Field::tInt) {
     return FfiField{
@@ -86,7 +91,7 @@ static auto marshalField(Logger::Field const &field) -> FfiField {
   } else if (field.type == nix::Logger::Field::tString) {
     return FfiField{
         .tag = FfiField::Tag::String,
-        .string = {FfiString{.start = field.s.data(), .len = field.s.length()}},
+        .string = {marshalString(field.s)},
     };
   }
   // w/e
@@ -152,6 +157,12 @@ public:
   }
 };
 
+Setting<std::string> otlpEndpoint{&settings, "", "otel-otlp-endpoint",
+                                  "Endpoint for OTLP to send telemetry to"};
+
+Setting<std::string> otlpHeaders{&settings, "", "otel-otlp-headers",
+                                 "Headers to use while sending OTLP telemetry"};
+
 class PluginInstance {
   Context *context;
   Logger *oldLogger;
@@ -159,7 +170,12 @@ class PluginInstance {
 public:
   PluginInstance() {
     Logger *oldLogger = logger;
-    context = initialize_plugin();
+    std::cout << otlpEndpoint.get() << "\n";
+    FfiString otlpEndpoint_ = marshalString(otlpEndpoint.get());
+
+    auto otlpHeaders_ = marshalString(otlpHeaders.get());
+    context = initialize_plugin(
+        otlpEndpoint.get().empty() ? nullptr : &otlpEndpoint_, &otlpHeaders_);
     logger = new OTelLogger(oldLogger, context);
   }
 

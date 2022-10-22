@@ -1,5 +1,5 @@
 use std::os::raw::c_char;
-use std::{slice, str};
+use std::slice;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u32)]
@@ -63,13 +63,15 @@ pub enum Field {
     Num(u64),
 }
 
-pub unsafe fn unmarshal_field(field: &FfiField) -> Option<Field> {
+pub unsafe fn unmarshal_string(s: &FfiString) -> String {
+    let bytes = unsafe { slice::from_raw_parts(s.start as *const u8, s.len) };
+    String::from(String::from_utf8_lossy(bytes))
+}
+
+pub unsafe fn unmarshal_field(field: &FfiField) -> Field {
     match field {
-        FfiField::String(s) => {
-            let bytes = unsafe { slice::from_raw_parts(s.start as *const u8, s.len) };
-            Some(Field::String(String::from(str::from_utf8(bytes).ok()?)))
-        }
-        FfiField::Num(n) => Some(Field::Num(*n)),
+        FfiField::String(s) => Field::String(unsafe { unmarshal_string(s) }),
+        FfiField::Num(n) => (Field::Num(*n)),
     }
 }
 
@@ -77,7 +79,7 @@ pub unsafe fn unmarshal_fields(fields: FfiFields) -> Vec<Field> {
     let slice = unsafe { slice::from_raw_parts(fields.start, fields.count) };
     slice
         .iter()
-        .filter_map(|ff| unsafe { unmarshal_field(ff) })
+        .map(|ff| unsafe { unmarshal_field(ff) })
         .collect()
 }
 

@@ -34,10 +34,10 @@ fn main() {
     let crate_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
     cbindgen::Builder::new()
-        .with_crate(crate_dir)
+        .with_crate(&crate_dir)
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file("nix_otel_plugin.h");
+        .write_to_file(format!("{}/nix_otel_plugin.h", &crate_dir));
 
     println!("cargo:rerun-if-changed=plugin.cpp");
     let nix_expr = pkg_config::Config::new()

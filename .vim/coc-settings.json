@@ -1,4 +1,5 @@
 {
     "rust-analyzer.cargo.runBuildScripts": false,
-    "rust-analyzer.server.path": "direnv-ra"
+    "rust-analyzer.server.path": "direnv-ra",
+    "clangd.path": "direnv-clangd"
 }
