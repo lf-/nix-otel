@@ -22,7 +22,7 @@
             checks = self.packages.${system};
 
             # for debugging
-            # inherit pkgs;
+            inherit pkgs;
 
             devShells.default = pkgs.nix-otel.overrideAttrs (
               old: {
@@ -35,6 +35,7 @@
                     bear
                     rust-analyzer
                     rust-cbindgen
+                    clang-tools_14
                   ]
                 );
               }
