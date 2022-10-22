@@ -589,6 +589,7 @@ dependencies = [
  "cc",
  "opentelemetry",
  "opentelemetry-otlp",
+ "opentelemetry_api",
  "opentelemetry_sdk",
  "pkg-config",
  "thread_local",

@@ -15,6 +15,7 @@ cbindgen = "0.24.3"
 [dependencies]
 opentelemetry = "0.18.0"
 opentelemetry-otlp = { version = "0.11.0", features = ["tls", "tls-roots"] }
+opentelemetry_api = "0.18.0"
 opentelemetry_sdk = { version = "0.18.0", features = ["rt-tokio"] }
 thread_local = "1.1.4"
 tokio = { version = "1.21.2", features = ["full"] }
