@@ -12,7 +12,7 @@ OTLP/gRPC.
 
 ### Honeycomb
 
-Set env vars like so:
+Set env vars like so in `.envrc.local`:
 
 ```
 export OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io
@@ -31,8 +31,6 @@ yet](https://github.com/open-telemetry/opentelemetry-rust/issues/774).
 ## Development
 
 I use nix-direnv and direnv to make this project work across C++ and Rust.
-
-Your `.envrc` should have `use flake` in it.
 
 To make rust-analyzer work for you and pick up the right compiler and so on,
 you will need to create a wrapper script `direnv-ra` somewhere in your $PATH,

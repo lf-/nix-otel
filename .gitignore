@@ -1,4 +1,4 @@
 /target
 result
-.envrc
+.envrc.local
 plugin/nix_otel_plugin.h
