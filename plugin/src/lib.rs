@@ -43,10 +43,12 @@ pub extern "C" fn start_activity(
     act: ActivityId,
     ty: ActivityKind,
     name: *const c_char,
+    fields: FfiFields,
     parent: ActivityId,
 ) {
     let name = unsafe { CStr::from_ptr(name as *const _) };
     let name_ = name.to_str().unwrap().to_owned();
+    let fields = unsafe { unmarshal_fields(fields) };
     tell(
         cx,
         Message::BeginActivity(
@@ -59,6 +61,7 @@ pub extern "C" fn start_activity(
                 } else {
                     Some(parent)
                 },
+                fields,
             },
             SystemTime::now(),
         ),

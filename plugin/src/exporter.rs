@@ -12,71 +12,116 @@ use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue, MetadataMap};
 
 use crate::activity::{ActivityId, ActivityRecord, Field, ResultKind};
 
-struct SpanMap(pub HashMap<ActivityId, ActivityData>);
+struct SpanMap {
+    pub map: HashMap<ActivityId, ActivityData>,
+    tracer: Tracer,
+}
 
 struct ActivityData {
     // record: ActivityRecord,
     context: Context,
+    phase_span: Option<Context>,
+}
+
+fn fields_key_value(fields: &Vec<Field>) -> KeyValue {
+    KeyValue::new(
+        "nix.fields",
+        opentelemetry::Value::Array(Array::String(
+            fields.iter().map(|v| format!("{v}").into()).collect(),
+        )),
+    )
 }
 
 impl SpanMap {
-    fn begin(
-        &mut self,
-        tracer: &Tracer,
-        context: &Context,
-        record: ActivityRecord,
-        start_time: SystemTime,
-    ) {
+    fn begin(&mut self, context: &Context, record: ActivityRecord, start_time: SystemTime) {
         let id = record.id;
         let name = record.name.clone();
         let parent_context = record
             .parent
-            .and_then(|p| self.0.get(&p))
+            .and_then(|p| self.map.get(&p))
             .map(|p| &p.context)
             .unwrap_or(context);
+
+        let attrs = [
+            KeyValue::new("nix.activitykind", format!("{:?}", record.kind)),
+            fields_key_value(&record.fields),
+        ];
 
         let ad = ActivityData {
             // TODO: is this actually right?!
             context: parent_context.with_span(
-                tracer
+                self.tracer
                     .span_builder(Cow::Owned(name))
                     .with_start_time(start_time)
-                    .with_attributes([KeyValue::new(
-                        "nix.activitykind",
-                        format!("{:?}", record.kind),
-                    )])
-                    .start_with_context(tracer, parent_context),
+                    .with_attributes(attrs)
+                    .start_with_context(&self.tracer, parent_context),
             ),
+            phase_span: None,
         };
 
-        self.0.insert(id, ad);
+        self.map.insert(id, ad);
     }
 
     fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime, fields: Vec<Field>) {
-        if let Some(ad) = self.0.get(&act) {
-            let attrs = vec![KeyValue::new(
-                "nix.fields",
-                opentelemetry::Value::Array(Array::String(
-                    fields.iter().map(|v| format!("{v}").into()).collect(),
-                )),
-            )];
-            ad.context
-                .span()
-                .add_event_with_timestamp(format!("{kind:?}"), time, attrs)
+        if let Some(ad) = self.map.get_mut(&act) {
+            let attrs = vec![
+                KeyValue::new("nix.event_kind", format!("{kind:?}")),
+                fields_key_value(&fields),
+            ];
+            match kind {
+                ResultKind::SetPhase => {
+                    if let Some(ref span) = ad.phase_span {
+                        span.span().end_with_timestamp(time);
+                    }
+                    ad.phase_span = Some(
+                        ad.context.with_span(
+                            self.tracer
+                                .span_builder(Cow::Owned(
+                                    fields
+                                        .get(0)
+                                        .map(|f| format!("{f}"))
+                                        .unwrap_or("no phase".to_owned()),
+                                ))
+                                .start_with_context(&self.tracer, &ad.context),
+                        ),
+                    )
+                }
+                ResultKind::BuildLogLine => ad.context.span().add_event_with_timestamp(
+                    format!(
+                        "{}",
+                        fields
+                            .get(0)
+                            .unwrap_or(&Field::String("(no message)".to_string())),
+                    ),
+                    time,
+                    attrs,
+                ),
+                kind => {
+                    ad.context
+                        .span()
+                        .add_event_with_timestamp(format!("{kind:?}"), time, attrs)
+                }
+            }
         }
     }
 
     fn end(&mut self, act: ActivityId, end_time: SystemTime) {
-        if let Some(ad) = self.0.get_mut(&act) {
+        if let Some(ad) = self.map.get_mut(&act) {
+            if let Some(ref span) = ad.phase_span {
+                span.span().end_with_timestamp(end_time);
+            }
             ad.context.span().end_with_timestamp(end_time);
             // intentionally don't remove it, since it may be used as a parent
             // for another span
         }
     }
 }
-impl Default for SpanMap {
-    fn default() -> Self {
-        Self(Default::default())
+impl SpanMap {
+    fn new(tracer: Tracer) -> Self {
+        Self {
+            map: Default::default(),
+            tracer,
+        }
     }
 }
 
@@ -100,15 +145,10 @@ fn startup() -> Result<Runtime, Error> {
     Ok(runtime)
 }
 
-async fn process_message(
-    message: Message,
-    span_map: &mut SpanMap,
-    tracer: &Tracer,
-    root_context: &Context,
-) {
+async fn process_message(message: Message, span_map: &mut SpanMap, root_context: &Context) {
     match message {
         Message::BeginActivity(rec, time) => {
-            span_map.begin(tracer, root_context, rec, time);
+            span_map.begin(root_context, rec, time);
         }
         Message::EndActivity(id, time) => {
             span_map.end(id, time);
@@ -160,7 +200,7 @@ async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), 
         )
         .install_batch(opentelemetry_sdk::runtime::Tokio)?;
 
-    let mut span_map = SpanMap::default();
+    let mut span_map = SpanMap::new(tracer.clone());
 
     let root_context = Context::new();
     let root_context =
@@ -175,7 +215,7 @@ async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), 
                 root_context.span().end();
                 break;
             }
-            Some(v) => process_message(v, &mut span_map, &tracer, &root_context).await,
+            Some(v) => process_message(v, &mut span_map, &root_context).await,
         }
     }
     if let Some(tp) = tracer.provider() {

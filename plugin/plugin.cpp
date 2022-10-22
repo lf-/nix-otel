@@ -96,9 +96,16 @@ static auto marshalField(Logger::Field const &field) -> FfiField {
 static auto marshalFields(Logger::Fields const &fields)
     -> std::vector<FfiField> {
   std::vector<FfiField> out{};
-  std::transform(fields.begin(), fields.end(), std::back_inserter(out),
-                 [](auto field) { return marshalField(field); });
+  for (auto &&f : fields) {
+    out.push_back(marshalField(f));
+  }
+
   return out;
+}
+
+static auto unwrapVectorToFfiFields(std::vector<FfiField> const &fields_)
+    -> FfiFields {
+  return FfiFields{.start = fields_.data(), .count = fields_.size()};
 }
 
 class OTelLogger : public Logger {
@@ -126,8 +133,9 @@ public:
   void startActivity(ActivityId act, Verbosity lvl, ActivityType type,
                      const std::string &s, const Fields &fields,
                      ActivityId parent) override {
+    auto fields_ = marshalFields(fields);
     start_activity(m_context, act, marshalActivityType(type), s.c_str(),
-                   parent);
+                   unwrapVectorToFfiFields(fields_), parent);
     upstream->startActivity(act, lvl, type, s, fields, parent);
   };
 
@@ -139,7 +147,7 @@ public:
   void result(ActivityId act, ResultType type, const Fields &fields) override {
     auto fields_ = marshalFields(fields);
     on_result(m_context, act, marshalResultType(type),
-              FfiFields{.start = fields_.data(), .count = fields_.size()});
+              unwrapVectorToFfiFields(fields_));
     upstream->result(act, type, fields);
   };
 
