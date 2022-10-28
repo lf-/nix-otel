@@ -3,14 +3,14 @@ use std::{borrow::Cow, collections::HashMap, convert::TryFrom, time::SystemTime}
 use opentelemetry::{
     global,
     trace::{TraceContextExt, Tracer as TracerT},
-    Array, Context, KeyValue,
+    Context, KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{trace::Tracer, Resource};
 use tokio::{runtime::Runtime, sync::mpsc};
 use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue, MetadataMap};
 
-use crate::activity::{ActivityId, ActivityRecord, Field, ResultKind};
+use crate::activity::{ActivityId, ActivityRecord, Field, ResultKind, ActivityKind};
 
 struct SpanMap {
     pub map: HashMap<ActivityId, ActivityData>,
@@ -23,14 +23,36 @@ struct ActivityData {
     phase_span: Option<Context>,
 }
 
-fn fields_key_value(fields: &Vec<Field>) -> Option<KeyValue> {
-    if fields.len() > 0 {
-        return Some(KeyValue::new(
-                "nix.fields",
-                fields.iter().map(|v| format!("{v}").into()).collect::<Vec<String>>().join(" ")
-        ))
-    } else {
-        return None
+impl ActivityRecord {
+    fn build_attributes(self) -> Vec<KeyValue> {
+        let mut attributes = vec![KeyValue::new("nix.activitykind", format!("{:?}", self.kind))];
+        if self.fields.len() > 0 {
+            match self.kind {
+                ActivityKind::Build => {
+                    attributes.extend([
+                        KeyValue::new("nix.storepath", format!("{}", self.fields[0])),
+                        KeyValue::new("nix.machineName", format!("{}", self.fields[1])),
+                        KeyValue::new("nix.currentRound", format!("{}", self.fields[2])),
+                        KeyValue::new("nix.numberOfRounds", format!("{}", self.fields[3]))
+                    ])
+                }
+                ActivityKind::QueryPathInfo | ActivityKind::Substitute => {
+                    attributes.extend(vec![
+                        KeyValue::new("nix.storepath", format!("{}", self.fields[0])),
+                        KeyValue::new("nix.uri", format!("{}", self.fields[1])),
+                    ])
+                }
+                ActivityKind::CopyPath => {
+                    attributes.extend(vec![
+                        KeyValue::new("nix.storepath", format!("{}", self.fields[0])),
+                        KeyValue::new("nix.srcUri", format!("{}", self.fields[1])),
+                        KeyValue::new("nix.dstUri", format!("{}", self.fields[2])),
+                    ])
+                }
+                _ => ()
+            }
+        }
+        return attributes
     }
 }
 
@@ -44,17 +66,13 @@ impl SpanMap {
             .map(|p| &p.context)
             .unwrap_or(context);
 
-        let attrs = vec![
-            Some(KeyValue::new("nix.activitykind", format!("{:?}", record.kind))),
-            fields_key_value(&record.fields),
-        ].into_iter().flatten().collect::<Vec<_>>();
         let ad = ActivityData {
             // TODO: is this actually right?!
             context: parent_context.with_span(
                 self.tracer
                     .span_builder(Cow::Owned(name))
                     .with_start_time(start_time)
-                    .with_attributes(attrs)
+                    .with_attributes(record.build_attributes())
                     .start_with_context(&self.tracer, parent_context),
             ),
             phase_span: None,
@@ -65,10 +83,7 @@ impl SpanMap {
 
     fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime, fields: Vec<Field>) {
         if let Some(ad) = self.map.get_mut(&act) {
-            let attrs = vec![
-                Some(KeyValue::new("nix.event_kind", format!("{kind:?}"))),
-                fields_key_value(&fields),
-            ].into_iter().flatten().collect::<Vec<_>>();
+            let attrs = vec![KeyValue::new("nix.event_kind", format!("{kind:?}"))];
             match kind {
                 ResultKind::SetPhase => {
                     if let Some(ref span) = ad.phase_span {
@@ -95,7 +110,7 @@ impl SpanMap {
                             .unwrap_or(&Field::String("(no message)".to_string())),
                     ),
                     time,
-                    attrs,
+                    attrs
                 ),
                 kind => {
                     ad.context
