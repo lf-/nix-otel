@@ -23,13 +23,15 @@ struct ActivityData {
     phase_span: Option<Context>,
 }
 
-fn fields_key_value(fields: &Vec<Field>) -> KeyValue {
-    KeyValue::new(
-        "nix.fields",
-        opentelemetry::Value::Array(Array::String(
-            fields.iter().map(|v| format!("{v}").into()).collect(),
-        )),
-    )
+fn fields_key_value(fields: &Vec<Field>) -> Option<KeyValue> {
+    if fields.len() > 0 {
+        return Some(KeyValue::new(
+                "nix.fields",
+                fields.iter().map(|v| format!("{v}").into()).collect::<Vec<String>>().join(" ")
+        ))
+    } else {
+        return None
+    }
 }
 
 impl SpanMap {
@@ -42,11 +44,10 @@ impl SpanMap {
             .map(|p| &p.context)
             .unwrap_or(context);
 
-        let attrs = [
-            KeyValue::new("nix.activitykind", format!("{:?}", record.kind)),
+        let attrs = vec![
+            Some(KeyValue::new("nix.activitykind", format!("{:?}", record.kind))),
             fields_key_value(&record.fields),
-        ];
-
+        ].into_iter().flatten().collect::<Vec<_>>();
         let ad = ActivityData {
             // TODO: is this actually right?!
             context: parent_context.with_span(
@@ -65,9 +66,9 @@ impl SpanMap {
     fn result(&mut self, act: ActivityId, kind: ResultKind, time: SystemTime, fields: Vec<Field>) {
         if let Some(ad) = self.map.get_mut(&act) {
             let attrs = vec![
-                KeyValue::new("nix.event_kind", format!("{kind:?}")),
+                Some(KeyValue::new("nix.event_kind", format!("{kind:?}"))),
                 fields_key_value(&fields),
-            ];
+            ].into_iter().flatten().collect::<Vec<_>>();
             match kind {
                 ResultKind::SetPhase => {
                     if let Some(ref span) = ad.phase_span {
