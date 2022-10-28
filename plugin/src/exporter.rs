@@ -204,7 +204,9 @@ async fn exporter_run(mut recv: mpsc::UnboundedReceiver<Message>) -> Result<(), 
 
     let root_context = Context::new();
     let root_context =
-        root_context.with_span(tracer.start_with_context("nix execution", &root_context));
+        root_context.with_span(tracer.start_with_context(
+                std::env::args().collect::<Vec<String>>().join(" "),
+                &root_context));
     loop {
         match recv.recv().await {
             None | Some(Message::Terminate) => {
