@@ -67,6 +67,12 @@ fn main() {
         .cargo_metadata(false)
         .file("plugin.cpp");
 
+    // HACK: For some reason, rustc doesn't link libc++ on macOS by itself even
+    // though cc-rs has been told cpp(true). So we force it.
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=c++");
+    }
+
     let mut parts = nix_ver.split('.').map(str::parse);
     let major: u32 = parts.next().unwrap().unwrap();
     let minor = parts.next().unwrap().unwrap();
