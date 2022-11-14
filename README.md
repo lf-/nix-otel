@@ -10,6 +10,24 @@ OTLP/gRPC.
 
 ## Setup
 
+### Installation
+
+To install nix-otel, it needs to be passed to Nix in the option `plugin-files`.
+[Currently](https://github.com/lf-/nix-otel/issues/3) nix-otel can only run on
+the Nix client, so my recommendation is to just use the flake from this
+repository and `--option plugin-files`, for now. In the future, it will be able
+to run on the daemon so it will be easier to install system wide.
+
+#### Important note
+
+You need to *ensure* that the version of Nix that `nix-otel` is loaded in is
+exactly the same as the one it's built against. We [found a strange macOS-only
+bug](https://github.com/lf-/nix-otel/pull/12) where `nix-otel` built against a
+different copy of Nix 2.11.0 than it was run against would not get any data.
+
+In practice, this means running with the `nix` binary provided by the `nix
+develop` shell from this project rather than the system Nix.
+
 ### Honeycomb
 
 Set env vars like so in `.envrc.local`:
