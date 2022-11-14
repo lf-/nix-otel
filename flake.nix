@@ -33,6 +33,7 @@
               # any dev tools you use in excess of the rust ones
               nativeBuildInputs = old.nativeBuildInputs ++ (
                 with pkgs; [
+                  nix
                   bear
                   rust-analyzer
                   rust-cbindgen
