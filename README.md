@@ -40,6 +40,15 @@ export OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_APIKEY
 Then set the Nix configuration option `plugin-files` to include the plugin .so
 or .dylib file.
 
+### Jaeger
+
+Use [Jaeger Opentelemetry collector](https://github.com/jaegertracing/jaeger-opentelemetry-collector)
+Set env vars like so in `.envrc.local`:
+
+```shell
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+```
+
 ### Other services
 
 No idea. Sorry. They probably work but might need some minor patches since
