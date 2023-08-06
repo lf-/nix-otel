@@ -60,7 +60,7 @@ fn main() {
         .cpp(true)
         .opt_level(2)
         .shared_flag(true)
-        .flag("-std=c++17")
+        .flag("-std=c++20")
         .add_pkg_config(nix_expr)
         .add_pkg_config(nix_store)
         .add_pkg_config(nix_main)
