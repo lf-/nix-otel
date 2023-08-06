@@ -55,12 +55,23 @@ fn main() {
 
     let nix_ver = nix_expr.version.clone();
 
+    let mut parts = nix_ver.split('.').map(str::parse);
+    let major: u32 = parts.next().unwrap().unwrap();
+    let minor = parts.next().unwrap().unwrap();
+
+    let mut cpp_version = "20";
+
+    if (major, minor) <= (2, 11) {
+        cpp_version = "17";
+    }
+
+
     let mut build = cc::Build::new();
     build
         .cpp(true)
         .opt_level(2)
         .shared_flag(true)
-        .flag("-std=c++17")
+        .flag(&format!("-std=c++{}", cpp_version))
         .add_pkg_config(nix_expr)
         .add_pkg_config(nix_store)
         .add_pkg_config(nix_main)
@@ -72,10 +83,6 @@ fn main() {
     if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-lib=c++");
     }
-
-    let mut parts = nix_ver.split('.').map(str::parse);
-    let major: u32 = parts.next().unwrap().unwrap();
-    let minor = parts.next().unwrap().unwrap();
 
     // Indicate that we need to patch around an API change with macros
     if (major, minor) >= (2, 4) {
